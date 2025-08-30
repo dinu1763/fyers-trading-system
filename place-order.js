@@ -221,6 +221,58 @@ async function verifyEnvironment() {
   }
 }
 
+// Add this improved function to your place-order.js
+async function getCurrentMarketPrice(symbol) {
+  try {
+    const fyersService = new FyersService();
+    
+    // Try different symbol formats
+    const symbolFormats = [
+      symbol.toUpperCase(),
+      symbol.replace('NSE:', ''),
+      symbol.replace('-EQ', ''),
+      `NSE:${symbol.replace('NSE:', '').replace('-EQ', '')}-EQ`
+    ];
+    
+    for (const testSymbol of symbolFormats) {
+      try {
+        console.log(`🔍 Trying symbol format: ${testSymbol}`);
+        const quotes = await fyersService.getQuotes([testSymbol]);
+        
+        if (quotes && quotes.s === 'ok' && quotes.data) {
+          const symbolData = quotes.data[testSymbol] || quotes.data[0] || Object.values(quotes.data)[0];
+          
+          if (symbolData && symbolData.ltp) {
+            console.log(`✅ Found price for ${testSymbol}: ₹${symbolData.ltp}`);
+            return {
+              price: symbolData.ltp,
+              symbol: testSymbol
+            };
+          }
+        }
+      } catch (formatError) {
+        console.log(`❌ Format ${testSymbol} failed: ${formatError.message}`);
+        continue;
+      }
+    }
+    
+    throw new Error('Could not fetch price with any symbol format');
+    
+  } catch (error) {
+    console.log('❌ Market price fetch failed:', error.message);
+    
+    // Fallback: Ask user for manual price
+    console.log('');
+    console.log('💡 SOLUTIONS:');
+    console.log('1. Check if market is open (9:15 AM - 3:30 PM IST)');
+    console.log('2. Verify your access token: node examples/auth-setup.js');
+    console.log('3. Use manual price: node place-order.js short-m NSE:HDFCBANK-EQ 10 [PRICE] 0.75 0.35');
+    console.log('4. Try different symbol: NSE:HDFCBANK-EQ or just HDFCBANK');
+    
+    throw error;
+  }
+}
+
 async function getHoldings() {
   try {
     const orderService = new OrderService();
@@ -980,6 +1032,317 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
   }
 }
 
+async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null, takeProfitPercent = 0.75, stopLossPercent = 0.35) {
+  try {
+    const orderService = new OrderService();
+    
+    let price;
+    const qty = parseInt(quantity);
+    const tpPercent = parseFloat(takeProfitPercent);
+    const slPercent = parseFloat(stopLossPercent);
+    
+    // If marketPrice is provided, use it for calculations, otherwise get current market price
+    if (marketPrice) {
+      price = parseFloat(marketPrice);
+    } else {
+      // Get current market price with multiple attempts
+      try {
+        const fyersService = new FyersService();
+
+        // Try different symbol formats
+        const symbolFormats = [
+          symbol.toUpperCase(),
+          symbol.replace('NSE:', ''),
+          `NSE:${symbol.replace('NSE:', '').replace('-EQ', '')}-EQ`
+        ];
+
+        let priceFound = false;
+        for (const testSymbol of symbolFormats) {
+          try {
+            console.log(`🔍 Trying to fetch price for: ${testSymbol}`);
+            const quotes = await fyersService.getQuotes([testSymbol]);
+
+            if (quotes && quotes.s === 'ok' && quotes.data) {
+              const symbolData = quotes.data[testSymbol] || quotes.data[0] || Object.values(quotes.data)[0];
+              if (symbolData && symbolData.ltp) {
+                price = symbolData.ltp;
+                console.log(`📈 Current market price for ${testSymbol}: ₹${price}`);
+                priceFound = true;
+                break;
+              }
+            }
+          } catch (formatError) {
+            console.log(`❌ Format ${testSymbol} failed: ${formatError.message}`);
+            continue;
+          }
+        }
+
+        if (!priceFound) {
+          throw new Error('Could not fetch price with any symbol format');
+        }
+      } catch (priceError) {
+        printError(`❌ Could not fetch market price: ${priceError.message}`);
+        console.log('');
+        console.log('💡 SOLUTIONS:');
+        console.log('1. Check if market is open (9:15 AM - 3:30 PM IST)');
+        console.log('2. Verify authentication: node examples/auth-setup.js');
+        console.log('3. Use manual price instead:');
+        console.log(`   node place-order.js short NSE:HDFCBANK-EQ 10 [PRICE] ${tpPercent} ${slPercent}`);
+        console.log('4. Try limit order: node place-order.js short NSE:HDFCBANK-EQ 10 1650');
+        console.log('');
+        printError('Please provide market price manually or fix authentication');
+        return;
+      }
+    }
+    
+    // Calculate TP and SL prices for SHORT SELLING
+    const takeProfitPrice = price - (price * tpPercent / 100);  // Lower price = profit for short
+    const stopLossPrice = price + (price * slPercent / 100);    // Higher price = loss for short
+    
+    console.log(`🔻 Placing SHORT SELL MIS Order at MARKET PRICE with TP/SL + Auto-Cancel:`);
+    console.log(`   Symbol: ${symbol}`);
+    console.log(`   Quantity: ${qty}`);
+    console.log(`   Market Price (Reference): ₹${price}`);
+    console.log(`   Order Type: MARKET ORDER`);
+    console.log(`   Take Profit (Buy Back): ₹${takeProfitPrice.toFixed(2)} (-${tpPercent}%) = Profit: ₹${(price - takeProfitPrice).toFixed(2)} per share`);
+    console.log(`   Stop Loss (Buy Back): ₹${stopLossPrice.toFixed(2)} (+${slPercent}%) = Loss: ₹${(stopLossPrice - price).toFixed(2)} per share`);
+    console.log('');
+    
+    // Step 1: Place the SHORT SELL MARKET order
+    const shortOrder = await orderService.placeOrder({
+      symbol: symbol.toUpperCase(),
+      quantity: qty,
+      side: -1, // SELL (Short position)
+      type: 2,  // MARKET order (changed from limit)
+      productType: 'INTRADAY',
+      validity: 'DAY'
+    });
+    
+    if (shortOrder.s !== 'ok') {
+      printError(`❌ Short sell market order failed: ${shortOrder.message}`);
+      return;
+    }
+    
+    printSuccess(`✅ Short sell MARKET order placed! Order ID: ${shortOrder.id}`);
+    
+    // Wait for short order to execute (market orders usually execute immediately)
+    console.log('⏳ Waiting for short sell market order execution...');
+    let shortExecuted = false;
+    let actualExecutionPrice = price; // Default to reference price
+    let attempts = 0;
+    const maxAttempts = 6; // 1 minute for market orders
+    
+    while (!shortExecuted && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+      attempts++;
+      
+      try {
+        const orders = await orderService.getOrders();
+        const shortOrderStatus = orders.data?.orderBook?.find(order => order.id === shortOrder.id);
+        
+        if (shortOrderStatus && (shortOrderStatus.status === 'COMPLETE' || shortOrderStatus.status === 'FILLED')) {
+          shortExecuted = true;
+          // Try to get actual execution price
+          actualExecutionPrice = shortOrderStatus.tradedPrice || shortOrderStatus.avgPrice || price;
+          
+          printSuccess(`✅ Short sell market order executed at ₹${actualExecutionPrice}!`);
+          printSuccess(`📊 You are now SHORT ${qty} shares`);
+          
+          // Recalculate TP/SL based on actual execution price
+          const newTakeProfitPrice = actualExecutionPrice - (actualExecutionPrice * tpPercent / 100);
+          const newStopLossPrice = actualExecutionPrice + (actualExecutionPrice * slPercent / 100);
+          
+          console.log(`🔄 Recalculating TP/SL based on actual execution price:`);
+          console.log(`   New Take Profit: ₹${newTakeProfitPrice.toFixed(2)}`);
+          console.log(`   New Stop Loss: ₹${newStopLossPrice.toFixed(2)}`);
+          
+          // Update prices for TP/SL orders
+          price = actualExecutionPrice;
+          break;
+        } else if (shortOrderStatus && shortOrderStatus.status === 'CANCELLED') {
+          printError(`❌ Short sell market order was cancelled`);
+          return;
+        }
+        
+        console.log(`⏳ Attempt ${attempts}/${maxAttempts}: Market order status: ${shortOrderStatus?.status || 'Unknown'}`);
+      } catch (error) {
+        console.log(`⚠️ Error checking order status: ${error.message}`);
+      }
+    }
+    
+    if (!shortExecuted) {
+      printWarning(`⚠️ Market order status unclear. Proceeding with TP/SL placement...`);
+    }
+    
+    // Recalculate TP/SL based on final execution price
+    const finalTakeProfitPrice = price - (price * tpPercent / 100);
+    const finalStopLossPrice = price + (price * slPercent / 100);
+    
+    // Step 2: Place Take Profit and Stop Loss orders (Both are BUY orders to cover the short)
+    let tpOrderId = null;
+    let slOrderId = null;
+    
+    try {
+      // Take Profit: Buy back at lower price (profit for short position)
+      const tpOrder = await orderService.placeOrder({
+        symbol: symbol.toUpperCase(),
+        quantity: qty,
+        side: 1,  // BUY (to cover short position)
+        type: 1,  // Limit order
+        limitPrice: finalTakeProfitPrice,
+        productType: 'INTRADAY',
+        validity: 'DAY'
+      });
+      
+      if (tpOrder.s === 'ok') {
+        tpOrderId = tpOrder.id;
+        printSuccess(`✅ Take Profit order placed! Order ID: ${tpOrderId} (Buy back at ₹${finalTakeProfitPrice.toFixed(2)})`);
+      }
+    } catch (tpError) {
+      printError(`❌ Take Profit order failed: ${tpError.message}`);
+    }
+    
+    try {
+      // Stop Loss: Buy back at higher price (loss for short position)
+      const slOrder = await orderService.placeOrder({
+        symbol: symbol.toUpperCase(),
+        quantity: qty,
+        side: 1,  // BUY (to cover short position)
+        type: 4,  // Stop-loss market order
+        stopPrice: finalStopLossPrice,
+        productType: 'INTRADAY',
+        validity: 'DAY'
+      });
+      
+      if (slOrder.s === 'ok') {
+        slOrderId = slOrder.id;
+        printSuccess(`✅ Stop Loss order placed! Order ID: ${slOrderId} (Buy back at ₹${finalStopLossPrice.toFixed(2)})`);
+      }
+    } catch (slError) {
+      printError(`❌ Stop Loss order failed: ${slError.message}`);
+    }
+    
+    if (!tpOrderId || !slOrderId) {
+      printError(`❌ Failed to place both TP and SL orders. Manual management required.`);
+      return;
+    }
+    
+    // Step 3: Monitor TP and SL orders for execution and auto-cancel
+    console.log('');
+    printSuccess('🎯 Complete SHORT SELL MARKET ORDER setup finished!');
+    console.log('👁️ Starting order monitoring for auto-cancel...');
+    console.log('📋 Press Ctrl+C to stop monitoring');
+    console.log('');
+    console.log('📊 SHORT POSITION SUMMARY:');
+    console.log(`   Entry: SHORT ${qty} shares at ₹${price} (MARKET ORDER)`);
+    console.log(`   Target Profit: ₹${(price - finalTakeProfitPrice).toFixed(2)} per share = ₹${((price - finalTakeProfitPrice) * qty).toFixed(2)} total`);
+    console.log(`   Maximum Loss: ₹${(finalStopLossPrice - price).toFixed(2)} per share = ₹${((finalStopLossPrice - price) * qty).toFixed(2)} total`);
+    console.log('');
+    
+    // Continue with the same monitoring logic as before...
+    let monitoringActive = true;
+    let monitorCount = 0;
+    const maxMonitorTime = 360; // 6 hours in 1-minute intervals
+    
+    const monitor = setInterval(async () => {
+      if (!monitoringActive) return;
+      
+      monitorCount++;
+      console.log(`\n🔍 Monitor check ${monitorCount}/${maxMonitorTime} - ${new Date().toLocaleTimeString()}`);
+      
+      try {
+        const orders = await orderService.getOrders();
+        const tpOrder = orders.data?.orderBook?.find(order => order.id === tpOrderId);
+        const slOrder = orders.data?.orderBook?.find(order => order.id === slOrderId);
+        
+        // Check if Take Profit was executed
+        if (tpOrder && (tpOrder.status === 'COMPLETE' || tpOrder.status === 'FILLED')) {
+          const profit = (price - finalTakeProfitPrice) * qty;
+          printSuccess(`🎯 TAKE PROFIT HIT! Short covered at ₹${finalTakeProfitPrice.toFixed(2)}`);
+          printSuccess(`💰 PROFIT REALIZED: ₹${profit.toFixed(2)} (₹${(price - finalTakeProfitPrice).toFixed(2)} per share)`);
+          
+          console.log('🗑️ Cancelling Stop Loss order...');
+          try {
+            await orderService.cancelOrder(slOrderId);
+            printSuccess(`✅ Stop Loss order cancelled successfully!`);
+          } catch (cancelError) {
+            printError(`❌ Failed to cancel Stop Loss: ${cancelError.message}`);
+          }
+          
+          monitoringActive = false;
+          clearInterval(monitor);
+          printSuccess(`🏁 SHORT TRADE COMPLETED WITH PROFIT! 🎉💰`);
+          return;
+        }
+        
+        // Check if Stop Loss was executed
+        if (slOrder && (slOrder.status === 'COMPLETE' || slOrder.status === 'FILLED')) {
+          const loss = (finalStopLossPrice - price) * qty;
+          printWarning(`🛑 STOP LOSS HIT! Short covered at ₹${finalStopLossPrice.toFixed(2)}`);
+          printWarning(`📉 LOSS REALIZED: ₹${loss.toFixed(2)} (₹${(finalStopLossPrice - price).toFixed(2)} per share)`);
+          
+          console.log('🗑️ Cancelling Take Profit order...');
+          try {
+            await orderService.cancelOrder(tpOrderId);
+            printSuccess(`✅ Take Profit order cancelled successfully!`);
+          } catch (cancelError) {
+            printError(`❌ Failed to cancel Take Profit: ${cancelError.message}`);
+          }
+          
+          monitoringActive = false;
+          clearInterval(monitor);
+          printWarning(`🏁 SHORT TRADE COMPLETED WITH LOSS. Risk managed! 💪`);
+          return;
+        }
+        
+        // Show current status
+        console.log(`   TP Status: ${tpOrder?.status || 'Unknown'} (Buy at ₹${finalTakeProfitPrice.toFixed(2)})`);
+        console.log(`   SL Status: ${slOrder?.status || 'Unknown'} (Buy at ₹${finalStopLossPrice.toFixed(2)})`);
+        
+        // Show current position P&L if possible
+        try {
+          const positions = await orderService.getPositions();
+          const currentPosition = positions.data?.netPositions?.find(pos => 
+            pos.symbol.toUpperCase() === symbol.toUpperCase() && pos.netQty < 0
+          );
+          
+          if (currentPosition) {
+            const currentPrice = currentPosition.ltp || price;
+            const unrealizedPnL = (price - currentPrice) * Math.abs(currentPosition.netQty);
+            const pnlColor = unrealizedPnL >= 0 ? '🟢' : '🔴';
+            console.log(`   Current Price: ₹${currentPrice} | Unrealized P&L: ${pnlColor} ₹${unrealizedPnL.toFixed(2)}`);
+          }
+        } catch (posError) {
+          // Ignore position fetch errors
+        }
+        
+        // Stop monitoring after max time
+        if (monitorCount >= maxMonitorTime) {
+          monitoringActive = false;
+          clearInterval(monitor);
+          printInfo(`⏰ Monitoring stopped after 6 hours. Orders still active.`);
+        }
+        
+      } catch (error) {
+        console.log(`❌ Monitoring error: ${error.message}`);
+      }
+    }, 60000); // Check every 1 minute
+    
+    // Handle Ctrl+C
+    process.on('SIGINT', () => {
+      console.log('\n🛑 Stopping monitoring...');
+      monitoringActive = false;
+      clearInterval(monitor);
+      console.log('📋 Orders are still active. Check manually with: node place-order.js orders');
+      console.log('📊 Check positions with: node place-order.js positions');
+      process.exit(0);
+    });
+    
+  } catch (error) {
+    printError(`❌ Short sell setup failed: ${error.message}`);
+  }
+}
+
 async function monitorSystem() {
   printHeader('Real-time Monitoring (30 seconds)');
 
@@ -1149,6 +1512,43 @@ async function main() {
           console.log(`Take Profit: ₹${tp.toFixed(2)} (+${tpPercent}%)`);
           console.log(`Stop Loss: ₹${sl.toFixed(2)} (-${slPercent}%)`);
           console.log(`With auto-cancel monitoring enabled`);
+        }
+        break;
+
+      case 'short-market':
+      case 'short-m':
+        if (args.length < 3) {
+          printError('Usage: node place-order.js short-market <symbol> <quantity> [tp_percent] [sl_percent]');
+          console.log('Example: node place-order.js short-market NSE:SBIN-EQ 10 0.75 0.35');
+          return;
+        }
+        const marketTpPercent = args[3] || 0.75;
+        const marketSlPercent = args[4] || 0.35;
+        if (!isDryRun) {
+          await shortSellWithTPSLAndMonitor(args[1], args[2], null, marketTpPercent, marketSlPercent);
+        } else {
+          console.log(`Would place SHORT SELL MARKET ORDER: ${args[1]} x${args[2]}`);
+          console.log(`TP: -${marketTpPercent}% | SL: +${marketSlPercent}%`);
+        }
+        break;
+
+      case 'short-limit':
+      case 'short-l':
+        if (args.length < 4) {
+          printError('Usage: node place-order.js short-limit <symbol> <quantity> <limit_price> [tp_percent] [sl_percent]');
+          console.log('Example: node place-order.js short-limit NSE:SBIN-EQ 10 500 0.75 0.35');
+          return;
+        }
+        const limitTpPercent = args[4] || 0.75;
+        const limitSlPercent = args[5] || 0.35;
+        if (!isDryRun) {
+          await shortSellWithTPSLAndMonitor(args[1], args[2], args[3], limitTpPercent, limitSlPercent);
+        } else {
+          const price = parseFloat(args[3]);
+          const tp = price - (price * parseFloat(limitTpPercent) / 100);
+          const sl = price + (price * parseFloat(limitSlPercent) / 100);
+          console.log(`Would place SHORT SELL LIMIT ORDER: ${args[1]} x${args[2]} @₹${price}`);
+          console.log(`Take Profit: ₹${tp.toFixed(2)} | Stop Loss: ₹${sl.toFixed(2)}`);
         }
         break;
 
