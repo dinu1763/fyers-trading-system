@@ -11,15 +11,23 @@ class OrderService extends FyersService {
       const order = {
         symbol: orderData.symbol,
         qty: orderData.quantity,
-        type: orderData.type || 2, // 1: Limit, 2: Market, 3: SL, 4: SL-M
-        side: orderData.side, // 1: Buy, -1: Sell
-        productType: orderData.productType || "CNC", // CNC, INTRADAY, MARGIN, CO, BO
-        limitPrice: orderData.limitPrice || 0,
-        stopPrice: orderData.stopPrice || 0,
-        validity: orderData.validity || "DAY", // DAY, IOC
+        type: orderData.type || 2,
+        side: orderData.side,
+        productType: orderData.productType || "CNC",
+        validity: orderData.validity || "DAY",
         disclosedQty: orderData.disclosedQty || 0,
         offlineOrder: false
       };
+
+      // Add limitPrice if provided (don't check for > 0, as 0 might be valid)
+      if (orderData.limitPrice !== undefined && orderData.limitPrice !== null) {
+        order.limitPrice = parseFloat(orderData.limitPrice);
+      }
+
+      // Add stopPrice if provided
+      if (orderData.stopPrice !== undefined && orderData.stopPrice !== null) {
+        order.stopPrice = parseFloat(orderData.stopPrice);
+      }
 
       // Validate order data
       this.validateOrderData(order);
@@ -138,32 +146,29 @@ class OrderService extends FyersService {
     }
   }
 
-  validateOrderData(order) {
-    const required = ['symbol', 'qty', 'side'];
-    const missing = required.filter(field => !order[field]);
-    
-    if (missing.length > 0) {
-      throw new Error(`Missing required order fields: ${missing.join(', ')}`);
+validateOrderData(order) {
+    // Basic validation
+    if (!order.symbol || !order.qty || !order.side) {
+      throw new Error('Missing required order fields: symbol, qty, side');
     }
 
-    if (order.qty <= 0) {
-      throw new Error('Order quantity must be greater than 0');
-    }
-
-    if (![1, -1].includes(order.side)) {
-      throw new Error('Order side must be 1 (Buy) or -1 (Sell)');
-    }
-
-    if (![1, 2, 3, 4].includes(order.type)) {
-      throw new Error('Invalid order type');
-    }
-
-    if (order.type === 1 && (!order.limitPrice || order.limitPrice <= 0)) {
-      throw new Error('Limit price required for limit orders');
+    // Type-specific validation
+    if ([1, 3].includes(order.type) && (!order.limitPrice || order.limitPrice <= 0)) {
+      throw new Error('Limit price required for limit and stop-limit orders');
     }
 
     if ([3, 4].includes(order.type) && (!order.stopPrice || order.stopPrice <= 0)) {
       throw new Error('Stop price required for stop orders');
+    }
+    
+    // For stop-limit orders (type 3), ensure proper price relationship
+    if (order.type === 3) {
+      if (order.side === 1 && order.limitPrice >= order.stopPrice) {
+        throw new Error('For BUY stop orders: limitPrice must be less than stopPrice');
+      }
+      if (order.side === -1 && order.limitPrice >= order.stopPrice) {
+        throw new Error('For SELL stop orders: limitPrice must be less than stopPrice');
+      }
     }
   }
 

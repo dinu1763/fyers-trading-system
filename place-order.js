@@ -33,6 +33,9 @@
  */
 
 require('dotenv').config();
+// Import the calculator
+const { requiredTPpercent, requiredTPpercentShort } = require('./requiredTakeProfit');
+
 const fs = require('fs');
 const path = require('path');
 const { spawn, exec } = require('child_process');
@@ -156,6 +159,110 @@ For detailed help on a specific command:
   node place-order.js <command> --help
 `);
 }
+
+async function buyWithOptimalTPSL(symbol, quantity, limitPrice, ATR) {
+  const price = parseFloat(limitPrice);
+  const qty = parseInt(quantity);
+  const atrValue = parseFloat(ATR);
+
+  // Parameter validation
+  if (!price || price <= 0) {
+    throw new Error('Limit price must be a positive number');
+  }
+  if (!qty || qty <= 0) {
+    throw new Error('Quantity must be a positive number');
+  }
+  if (!ATR || isNaN(atrValue) || atrValue < 0) {
+    throw new Error('ATR is required and must be a non-negative number');
+  }
+
+  // Use ATR-based calculation only
+  const result = requiredTPpercent({
+    P: price,
+    Q: qty,
+    ATR: atrValue
+  });
+
+  const actualStopLossPercent = result.calculatedStopLossPercent * 100; // Convert to percentage
+  const optimalTPPercent = result.required_g * 100; // Convert back to percentage
+
+  console.log(`📊 Risk-Optimized Trade Setup (ATR-based):`);
+  console.log(`   ATR: ${atrValue} | Calculated Stop Loss: ${actualStopLossPercent.toFixed(3)}%`);
+  console.log(`   Stop Loss Price: ₹${result.stopLossPrice.toFixed(2)}`);
+  console.log(`   Optimal Take Profit: ${optimalTPPercent.toFixed(2)}%`);
+  console.log(`   Expected Net Loss if SL hits: ₹${result.netLoss.toFixed(2)}`);
+  console.log(`   Target Net Profit if TP hits: ₹${(2 * result.netLoss).toFixed(2)}`);
+
+  // Use calculated optimal percentages
+  // await buyWithTPSLAndMonitor(symbol, quantity, limitPrice, optimalTPPercent, actualStopLossPercent);
+
+  // Calculate TP and SL prices
+  const takeProfitPrice = price + (price * optimalTPPercent / 100);
+  const stopLossPrice = result.stopLossPrice;
+
+  console.log('=========================================');
+  console.log(`🛒 Details of Limit Buy Order with TP/SL:`);
+  console.log(`   Symbol: ${symbol}`);
+  console.log(`   Quantity: ${qty}`);
+  console.log(`   Limit Price: ₹${price}`);
+  console.log(`   Take Profit: ₹${takeProfitPrice.toFixed(2)} (+${optimalTPPercent.toFixed(2)}%)`);
+  console.log(`   Stop Loss: ₹${stopLossPrice.toFixed(2)} (-${actualStopLossPercent.toFixed(3)}%)`);
+  console.log(`   Calculation Method: ATR-based`);
+  console.log('');
+}
+
+async function shortSellWithOptimalTPSL(symbol, quantity, limitPrice, ATR) {
+  const price = parseFloat(limitPrice);
+  const qty = parseInt(quantity);
+  const atrValue = parseFloat(ATR);
+
+  // Parameter validation
+  if (!price || price <= 0) {
+    throw new Error('Limit price must be a positive number');
+  }
+  if (!qty || qty <= 0) {
+    throw new Error('Quantity must be a positive number');
+  }
+  if (!ATR || isNaN(atrValue) || atrValue < 0) {
+    throw new Error('ATR is required and must be a non-negative number');
+  }
+
+  // Use ATR-based calculation for short selling
+  const result = requiredTPpercentShort({
+    P: price,
+    Q: qty,
+    ATR: atrValue
+  });
+
+  const actualStopLossPercent = result.calculatedStopLossPercent * 100; // Convert to percentage
+  const optimalTPPercent = result.required_g * 100; // Convert back to percentage
+
+  console.log(`📊 Risk-Optimized SHORT SELL Setup (ATR-based):`);
+  console.log(`   ATR: ${atrValue} | Calculated Stop Loss: ${actualStopLossPercent.toFixed(3)}%`);
+  console.log(`   Stop Loss Price: ₹${result.stopLossPrice.toFixed(2)} (buy back ABOVE entry)`);
+  console.log(`   Optimal Take Profit: ${optimalTPPercent.toFixed(2)}%`);
+  console.log(`   Take Profit Price: ₹${result.takeProfitPrice.toFixed(2)} (buy back BELOW entry)`);
+  console.log(`   Expected Net Loss if SL hits: ₹${result.netLoss.toFixed(2)}`);
+  console.log(`   Target Net Profit if TP hits: ₹${(2 * result.netLoss).toFixed(2)}`);
+
+  // Use calculated optimal percentages
+  // await shortSellWithTPSLAndMonitor(symbol, quantity, limitPrice, optimalTPPercent, actualStopLossPercent);
+
+  // Calculate TP and SL prices for short selling
+  const takeProfitPrice = result.takeProfitPrice;  // Buy back at lower price
+  const stopLossPrice = result.stopLossPrice;     // Buy back at higher price
+
+  console.log('=========================================');
+  console.log(`🛒 Details of SHORT SELL Limit Order with TP/SL:`);
+  console.log(`   Symbol: ${symbol}`);
+  console.log(`   Quantity: ${qty}`);
+  console.log(`   Limit Price: ₹${price} (SHORT SELL)`);
+  console.log(`   Take Profit: ₹${takeProfitPrice.toFixed(2)} (-${optimalTPPercent.toFixed(2)}%) [BUY BACK]`);
+  console.log(`   Stop Loss: ₹${stopLossPrice.toFixed(2)} (+${actualStopLossPercent.toFixed(3)}%) [BUY BACK]`);
+  console.log(`   Calculation Method: ATR-based`);
+  console.log('');
+}
+
 
 async function verifyEnvironment() {
   printHeader('Environment Verification');
@@ -478,7 +585,18 @@ async function viewPositions() {
 
   try {
     const orderService = new OrderService();
+    console.log('🔍 Fetching positions from API...');
+    
     const positions = await orderService.getPositions();
+    
+    console.log('📊 Raw API Response:');
+    console.log(JSON.stringify(positions, null, 2));
+    
+    console.log('\n🔍 Checking different data paths:');
+    console.log('positions.data:', positions.data);
+    console.log('positions.data?.netPositions:', positions.data?.netPositions);
+    console.log('positions.data?.positions:', positions.data?.positions);
+    console.log('positions.data?.overall:', positions.data?.overall);
 
     if (positions.data && positions.data.netPositions && positions.data.netPositions.length > 0) {
       positions.data.netPositions.forEach((pos, index) => {
@@ -494,11 +612,25 @@ async function viewPositions() {
         console.log('   ---');
       });
     } else {
-      printInfo('No positions found');
+      printInfo('No positions found in expected format');
+      
+      // Try alternative API call
+      console.log('\n🔄 Trying alternative: getHoldings()...');
+      try {
+        const holdings = await orderService.getHoldings();
+        console.log('📊 Holdings Response:');
+        console.log(JSON.stringify(holdings, null, 2));
+      } catch (holdingsError) {
+        console.log(`❌ Holdings failed: ${holdingsError.message}`);
+      }
     }
 
   } catch (error) {
     printError(`Failed to fetch positions: ${error.message}`);
+    console.log('\n🔧 Troubleshooting:');
+    console.log('1. Check if you have INTRADAY positions vs CNC positions');
+    console.log('2. Try: node place-order.js holdings');
+    console.log('3. Verify API token is valid');
   }
 }
 
@@ -622,50 +754,116 @@ async function cancelAllOrders() {
   }
 }
 
+async function cancelIntradayOrders() {
+  try {
+    const orderService = new OrderService();
+    const orders = await orderService.getOrders();
+
+    if (orders.data && orders.data.orderBook) {
+      const intradayPendingOrders = orders.data.orderBook.filter(
+        order => (order.status === 'PENDING' || order.status === 'OPEN') &&
+                 (order.productType === 'INTRADAY' || order.productType === 'MIS')
+      );
+
+      if (intradayPendingOrders.length === 0) {
+        printInfo('No pending INTRADAY orders to cancel');
+        return;
+      }
+
+      console.log(`Found ${intradayPendingOrders.length} pending INTRADAY orders`);
+
+      for (const order of intradayPendingOrders) {
+        try {
+          await orderService.cancelOrder(order.id);
+          printSuccess(`Cancelled INTRADAY order: ${order.symbol} - ${order.id}`);
+        } catch (cancelError) {
+          printError(`Failed to cancel ${order.id}: ${cancelError.message}`);
+        }
+      }
+
+      printSuccess('Finished cancelling INTRADAY orders');
+
+    } else {
+      printInfo('No orders found');
+    }
+
+  } catch (error) {
+    printError(`Cancel INTRADAY orders failed: ${error.message}`);
+  }
+}
+
 async function emergencyClose() {
-  printHeader('🚨 EMERGENCY: Closing All Positions');
+  printHeader('🚨 EMERGENCY: Closing All INTRADAY Positions');
 
   try {
     const orderService = new OrderService();
 
-    // Get all positions
+    console.log('🔍 Fetching positions...');
     const positions = await orderService.getPositions();
+    
+    // Fix: Check the correct path - positions.netPositions (not positions.data.netPositions)
+    let allPositions = [];
+    
+    if (positions.netPositions) {
+      allPositions = positions.netPositions;
+    } else if (positions.data?.netPositions) {
+      allPositions = positions.data.netPositions;
+    } else if (positions.data?.positions) {
+      allPositions = positions.data.positions;
+    }
 
-    if (positions.data && positions.data.netPositions) {
-      const openPositions = positions.data.netPositions.filter(pos => pos.netQty !== 0);
+    // Filter for OPEN INTRADAY positions only (netQty !== 0)
+    const intradayPositions = allPositions.filter(pos => 
+      pos.netQty !== 0 && 
+      (pos.productType === 'INTRADAY' || pos.productType === 'MIS')
+    );
 
-      if (openPositions.length === 0) {
-        printInfo('No open positions to close');
-        return;
-      }
+    console.log(`📋 Total positions: ${allPositions.length}`);
+    console.log(`🎯 OPEN INTRADAY positions: ${intradayPositions.length}`);
 
-      console.log(`🚨 Closing ${openPositions.length} positions...`);
+    if (intradayPositions.length === 0) {
+      printInfo('No open INTRADAY positions found');
+    } else {
+      // Show positions to be closed
+      console.log('\n📊 Positions to close:');
+      intradayPositions.forEach(pos => {
+        console.log(`   ${pos.symbol}: ${pos.netQty} shares @ ₹${pos.netAvg} (P&L: ₹${pos.pl.toFixed(2)})`);
+      });
 
-      for (const position of openPositions) {
+      console.log(`\n🚨 Closing ${intradayPositions.length} INTRADAY positions...`);
+
+      for (const position of intradayPositions) {
         try {
+          console.log(`🔄 Closing ${position.symbol} (${position.netQty} shares)...`);
+          
           const closeOrder = await orderService.placeOrder({
             symbol: position.symbol,
             quantity: Math.abs(position.netQty),
             side: position.netQty > 0 ? -1 : 1, // Opposite side
             type: 2, // Market order for immediate execution
-            productType: position.productType
+            productType: 'INTRADAY'
           });
 
-          printSuccess(`Closed: ${position.symbol} - Order ID: ${closeOrder.id}`);
+          if (closeOrder.s === 'ok') {
+            printSuccess(`✅ Closed: ${position.symbol} - Order ID: ${closeOrder.id}`);
+          } else {
+            printError(`❌ Failed to close ${position.symbol}: ${closeOrder.message}`);
+          }
 
         } catch (closeError) {
-          printError(`Failed to close ${position.symbol}: ${closeError.message}`);
+          printError(`❌ Failed to close ${position.symbol}: ${closeError.message}`);
         }
       }
     }
 
-    // Also cancel all pending orders
-    await cancelAllOrders();
+    // Cancel only INTRADAY pending orders
+    console.log('\n🗑️ Cancelling INTRADAY pending orders...');
+    await cancelIntradayOrders();
 
-    printSuccess('Emergency closure completed');
+    printSuccess('✅ INTRADAY emergency closure completed');
 
   } catch (error) {
-    printError(`Emergency closure failed: ${error.message}`);
+    printError(`❌ Emergency closure failed: ${error.message}`);
   }
 }
 
@@ -837,9 +1035,17 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
     const tpPercent = parseFloat(takeProfitPercent);
     const slPercent = parseFloat(stopLossPercent);
     
-    // Calculate TP and SL prices
-    const takeProfitPrice = price + (price * tpPercent / 100);
-    const stopLossPrice = price - (price * slPercent / 100);
+    // Helper function to round to nearest rupee
+    function roundToNearestRupee(price) {
+      return Math.round(price);
+    }
+    
+    // Calculate TP and SL prices with rupee rounding
+    const rawTakeProfitPrice = price + (price * tpPercent / 100);
+    const rawStopLossPrice = price - (price * slPercent / 100);
+    
+    const takeProfitPrice = roundToNearestRupee(rawTakeProfitPrice);
+    const stopLossPrice = roundToNearestRupee(rawStopLossPrice);
     
     console.log(`🛒 Placing MIS Limit Buy Order with TP/SL + Auto-Cancel:`);
     console.log(`   Symbol: ${symbol}`);
@@ -867,11 +1073,11 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
     
     printSuccess(`✅ Buy order placed! Order ID: ${buyOrder.id}`);
     
-    // Wait for buy order to execute
+    // Wait for buy order execution
     console.log('⏳ Waiting for buy order execution...');
     let buyExecuted = false;
     let attempts = 0;
-    const maxAttempts = 12; // 2 minutes
+    const maxAttempts = 3; // 2 minutes
     
     while (!buyExecuted && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
@@ -879,20 +1085,17 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
       
       try {
         const orders = await orderService.getOrders();
-        const buyOrderStatus = orders.data?.orderBook?.find(order => order.id === buyOrder.id);
+        const buyOrderStatus = orders.data?.orderBook?.find(o => o.id === buyOrder.id);
         
         if (buyOrderStatus && (buyOrderStatus.status === 'COMPLETE' || buyOrderStatus.status === 'FILLED')) {
           buyExecuted = true;
-          printSuccess(`✅ Buy order executed!`);
+          printSuccess(`✅ Buy order executed at ₹${buyOrderStatus.tradedPrice || price}`);
           break;
-        } else if (buyOrderStatus && buyOrderStatus.status === 'CANCELLED') {
-          printError(`❌ Buy order was cancelled`);
-          return;
         }
         
-        console.log(`⏳ Attempt ${attempts}/${maxAttempts}: Buy order status: ${buyOrderStatus?.status || 'Unknown'}`);
+        console.log(`⏳ Buy order still pending... (${attempts}/${maxAttempts})`);
       } catch (error) {
-        console.log(`⚠️ Error checking order status: ${error.message}`);
+        console.log(`❌ Error checking order status: ${error.message}`);
       }
     }
     
@@ -905,6 +1108,7 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
     let slOrderId = null;
     
     try {
+      // Take Profit Order - FIXED: Proper limit order
       const tpOrder = await orderService.placeOrder({
         symbol: symbol.toUpperCase(),
         quantity: qty,
@@ -924,87 +1128,100 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
     }
     
     try {
+      // Stop Loss Order - Type 3 (Stop-Loss Limit) with correct price structure
+      const triggerPrice = stopLossPrice + 0.50; // Trigger 50 paise above limit price
+      const limitPrice = stopLossPrice;          // Minimum acceptable sell price
+      
+      console.log(`DEBUG - Stop Loss Values:`);
+      console.log(`   Trigger Price (stopPrice): ₹${triggerPrice}`);
+      console.log(`   Limit Price (limitPrice): ₹${limitPrice}`);
+      
       const slOrder = await orderService.placeOrder({
         symbol: symbol.toUpperCase(),
         quantity: qty,
         side: -1, // Sell
-        type: 4, // Stop-loss market order
-        stopPrice: stopLossPrice,
+        type: 3, // Stop-loss limit order
+        stopPrice: triggerPrice,  // ₹378.50 - Activates the order
+        limitPrice: limitPrice,   // ₹378.00 - Minimum sell price
         productType: 'INTRADAY',
         validity: 'DAY'
       });
       
       if (slOrder.s === 'ok') {
         slOrderId = slOrder.id;
-        printSuccess(`✅ Stop Loss order placed! Order ID: ${slOrderId}`);
+        printSuccess(`✅ Stop Loss limit order placed! Order ID: ${slOrderId}`);
+        console.log(`   Trigger: ₹${triggerPrice} | Min Sell: ₹${limitPrice}`);
+        console.log(`   ⚠️ Note: Limit order - may not execute in fast-falling market`);
       }
     } catch (slError) {
       printError(`❌ Stop Loss order failed: ${slError.message}`);
+      printError(`=.repeat(60)`);
+      printError(`Place a Manual Stop-Loss with Limit Price ${limitPrice}`);
+      printError(`=.repeat(60)`);
+
     }
-    
-    if (!tpOrderId || !slOrderId) {
-      printError(`❌ Failed to place both TP and SL orders. Manual management required.`);
-      return;
-    }
-    
-    // Step 3: Monitor TP and SL orders for execution
+
+    // Step 3: Start monitoring and auto-cancel
     console.log('');
-    printSuccess('🎯 Complete order setup finished!');
-    console.log('👁️ Starting order monitoring for auto-cancel...');
-    console.log('📋 Press Ctrl+C to stop monitoring');
+    printSuccess(`🎯 All orders placed successfully! Starting monitoring...`);
+    console.log(`📊 Monitoring will auto-cancel opposite order when TP or SL executes`);
+    console.log(`⏹️ Press Ctrl+C to stop monitoring (orders remain active)`);
+    console.log('');
     
     let monitoringActive = true;
     let monitorCount = 0;
-    const maxMonitorTime = 360; // 6 hours in 1-minute intervals
+    const maxMonitorTime = 360; // 6 hours
     
     const monitor = setInterval(async () => {
       if (!monitoringActive) return;
       
       monitorCount++;
-      console.log(`\n🔍 Monitor check ${monitorCount}/${maxMonitorTime} - ${new Date().toLocaleTimeString()}`);
       
       try {
         const orders = await orderService.getOrders();
-        const tpOrder = orders.data?.orderBook?.find(order => order.id === tpOrderId);
-        const slOrder = orders.data?.orderBook?.find(order => order.id === slOrderId);
+        const tpOrder = orders.data?.orderBook?.find(o => o.id === tpOrderId);
+        const slOrder = orders.data?.orderBook?.find(o => o.id === slOrderId);
         
-        // Check if Take Profit was executed
+        // Check if TP executed
         if (tpOrder && (tpOrder.status === 'COMPLETE' || tpOrder.status === 'FILLED')) {
-          printSuccess(`🎯 TAKE PROFIT HIT! Cancelling Stop Loss order...`);
+          printSuccess(`🎯 Take Profit executed at ₹${tpOrder.tradedPrice || takeProfitPrice}!`);
           
+          // Cancel SL order
           try {
             await orderService.cancelOrder(slOrderId);
-            printSuccess(`✅ Stop Loss order cancelled successfully!`);
+            printSuccess(`✅ Stop Loss order auto-cancelled`);
           } catch (cancelError) {
-            printError(`❌ Failed to cancel Stop Loss: ${cancelError.message}`);
+            printWarning(`⚠️ Could not cancel SL order: ${cancelError.message}`);
           }
           
           monitoringActive = false;
           clearInterval(monitor);
-          printSuccess(`🏁 Trade completed with PROFIT! 🎉`);
+          printSuccess(`🏆 Trade completed successfully with PROFIT!`);
           return;
         }
         
-        // Check if Stop Loss was executed
+        // Check if SL executed
         if (slOrder && (slOrder.status === 'COMPLETE' || slOrder.status === 'FILLED')) {
-          printWarning(`🛑 STOP LOSS HIT! Cancelling Take Profit order...`);
+          printWarning(`🛑 Stop Loss executed at ₹${slOrder.tradedPrice || stopLossPrice}!`);
           
+          // Cancel TP order
           try {
             await orderService.cancelOrder(tpOrderId);
-            printSuccess(`✅ Take Profit order cancelled successfully!`);
+            printSuccess(`✅ Take Profit order auto-cancelled`);
           } catch (cancelError) {
-            printError(`❌ Failed to cancel Take Profit: ${cancelError.message}`);
+            printWarning(`⚠️ Could not cancel TP order: ${cancelError.message}`);
           }
           
           monitoringActive = false;
           clearInterval(monitor);
-          printWarning(`🏁 Trade completed with LOSS. Better luck next time! 💪`);
+          printWarning(`📉 Trade completed with LOSS. Better luck next time!`);
           return;
         }
         
-        // Show current status
-        console.log(`   TP Status: ${tpOrder?.status || 'Unknown'}`);
-        console.log(`   SL Status: ${slOrder?.status || 'Unknown'}`);
+        // Periodic status update
+        if (monitorCount % 5 === 0) { // Every 5 minutes
+          console.log(`📊 Monitoring active... TP: ${tpOrder?.status || 'Unknown'} | SL: ${slOrder?.status || 'Unknown'} (${monitorCount}/360)`);
+        }
         
         // Stop monitoring after max time
         if (monitorCount >= maxMonitorTime) {
@@ -1024,6 +1241,7 @@ async function buyWithTPSLAndMonitor(symbol, quantity, limitPrice, takeProfitPer
       monitoringActive = false;
       clearInterval(monitor);
       console.log('📋 Orders are still active. Check manually with: node place-order.js orders');
+      console.log('📊 Check positions with: node place-order.js positions');
       process.exit(0);
     });
     
@@ -1095,9 +1313,17 @@ async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null,
       }
     }
     
-    // Calculate TP and SL prices for SHORT SELLING
-    const takeProfitPrice = price - (price * tpPercent / 100);  // Lower price = profit for short
-    const stopLossPrice = price + (price * slPercent / 100);    // Higher price = loss for short
+    // Helper function to round to nearest rupee
+    function roundToNearestRupee(price) {
+      return Math.round(price);
+    }
+    
+    // Calculate TP and SL prices for SHORT SELLING with rupee rounding
+    const rawTakeProfitPrice = price - (price * tpPercent / 100);  // Lower price = profit for short
+    const rawStopLossPrice = price + (price * slPercent / 100);    // Higher price = loss for short
+    
+    const takeProfitPrice = roundToNearestRupee(rawTakeProfitPrice);
+    const stopLossPrice = roundToNearestRupee(rawStopLossPrice);
     
     console.log(`🔻 Placing SHORT SELL MIS Order at MARKET PRICE with TP/SL + Auto-Cancel:`);
     console.log(`   Symbol: ${symbol}`);
@@ -1149,15 +1375,20 @@ async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null,
           printSuccess(`📊 You are now SHORT ${qty} shares`);
           
           // Recalculate TP/SL based on actual execution price
-          const newTakeProfitPrice = actualExecutionPrice - (actualExecutionPrice * tpPercent / 100);
-          const newStopLossPrice = actualExecutionPrice + (actualExecutionPrice * slPercent / 100);
+          const newRawTakeProfitPrice = actualExecutionPrice - (actualExecutionPrice * tpPercent / 100);
+          const newRawStopLossPrice = actualExecutionPrice + (actualExecutionPrice * slPercent / 100);
+          
+          const newTakeProfitPrice = roundToNearestRupee(newRawTakeProfitPrice);
+          const newStopLossPrice = roundToNearestRupee(newRawStopLossPrice);
           
           console.log(`🔄 Recalculating TP/SL based on actual execution price:`);
-          console.log(`   New Take Profit: ₹${newTakeProfitPrice.toFixed(2)}`);
-          console.log(`   New Stop Loss: ₹${newStopLossPrice.toFixed(2)}`);
+          console.log(`   New Take Profit: ₹${newTakeProfitPrice}`);
+          console.log(`   New Stop Loss: ₹${newStopLossPrice}`);
           
-          // Update prices for TP/SL orders
+          // Update prices for TP/SL orders (use rounded values)
           price = actualExecutionPrice;
+          takeProfitPrice = newTakeProfitPrice;
+          stopLossPrice = newStopLossPrice;
           break;
         } else if (shortOrderStatus && shortOrderStatus.status === 'CANCELLED') {
           printError(`❌ Short sell market order was cancelled`);
@@ -1178,7 +1409,7 @@ async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null,
     const finalTakeProfitPrice = price - (price * tpPercent / 100);
     const finalStopLossPrice = price + (price * slPercent / 100);
     
-    // Step 2: Place Take Profit and Stop Loss orders (Both are BUY orders to cover the short)
+// Step 2: Place Take Profit and Stop Loss orders
     let tpOrderId = null;
     let slOrderId = null;
     
@@ -1189,14 +1420,14 @@ async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null,
         quantity: qty,
         side: 1,  // BUY (to cover short position)
         type: 1,  // Limit order
-        limitPrice: finalTakeProfitPrice,
+        limitPrice: takeProfitPrice,
         productType: 'INTRADAY',
         validity: 'DAY'
       });
       
       if (tpOrder.s === 'ok') {
         tpOrderId = tpOrder.id;
-        printSuccess(`✅ Take Profit order placed! Order ID: ${tpOrderId} (Buy back at ₹${finalTakeProfitPrice.toFixed(2)})`);
+        printSuccess(`✅ Take Profit order placed! Order ID: ${tpOrderId} (Buy back at ₹${takeProfitPrice.toFixed(2)})`);
       }
     } catch (tpError) {
       printError(`❌ Take Profit order failed: ${tpError.message}`);
@@ -1204,28 +1435,63 @@ async function shortSellWithTPSLAndMonitor(symbol, quantity, marketPrice = null,
     
     try {
       // Stop Loss: Buy back at higher price (loss for short position)
+      // For SHORT positions: trigger when price goes UP (against us)
+      const triggerPrice = stopLossPrice - 0.50; // Trigger 50 paise below limit price
+      const limitPrice = stopLossPrice;          // Maximum acceptable buy price
+
+      console.log(`DEBUG - Stop Loss Values for SHORT position:`);
+      console.log(`   Trigger Price (stopPrice): ₹${triggerPrice} - Activates when market hits this`);
+      console.log(`   Limit Price (limitPrice): ₹${limitPrice} - Maximum buy back price`);
+
       const slOrder = await orderService.placeOrder({
         symbol: symbol.toUpperCase(),
         quantity: qty,
         side: 1,  // BUY (to cover short position)
-        type: 4,  // Stop-loss market order
-        stopPrice: finalStopLossPrice,
+        type: 3,  // Stop-loss limit order (changed from type 4)
+        stopPrice: triggerPrice,  // Trigger price - activates the order
+        limitPrice: limitPrice,   // Maximum buy back price
         productType: 'INTRADAY',
         validity: 'DAY'
       });
-      
+
       if (slOrder.s === 'ok') {
         slOrderId = slOrder.id;
-        printSuccess(`✅ Stop Loss order placed! Order ID: ${slOrderId} (Buy back at ₹${finalStopLossPrice.toFixed(2)})`);
+        printSuccess(`✅ Stop Loss trigger order placed! Order ID: ${slOrderId}`);
+        console.log(`   Trigger: ₹${triggerPrice} | Max Buy: ₹${limitPrice}`);
+        console.log(`   ✅ Order will remain dormant until trigger price is hit`);
       }
     } catch (slError) {
-      printError(`❌ Stop Loss order failed: ${slError.message}`);
+      printError(`❌ Stop Loss trigger order failed: ${slError.message}`);
+
+      // Fallback: Try as stop-loss market order (type 4)
+      try {
+        console.log(`🔄 Trying fallback: Stop-loss market order...`);
+        const slFallbackOrder = await orderService.placeOrder({
+          symbol: symbol.toUpperCase(),
+          quantity: qty,
+          side: 1,  // BUY
+          type: 4,  // Stop-loss market order
+          stopPrice: stopLossPrice,
+          productType: 'INTRADAY',
+          validity: 'DAY'
+        });
+
+        if (slFallbackOrder.s === 'ok') {
+          slOrderId = slFallbackOrder.id;
+          printSuccess(`✅ Stop Loss market order placed! Order ID: ${slOrderId}`);
+          console.log(`   Trigger: ₹${stopLossPrice} (market order execution)`);
+        }
+      } catch (fallbackError) {
+        printError(`❌ Stop Loss fallback also failed: ${fallbackError.message}`);
+        printWarning(`⚠️ Manual stop loss management required!`);
+        console.log(`📋 Manually place stop loss: Buy ${qty} shares if price reaches ₹${stopLossPrice}`);
+      }
     }
     
-    if (!tpOrderId || !slOrderId) {
-      printError(`❌ Failed to place both TP and SL orders. Manual management required.`);
-      return;
-    }
+    // if (!tpOrderId || !slOrderId) {
+    //   printError(`❌ Failed to place both TP and SL orders. Manual management required.`);
+    //   return;
+    // }
     
     // Step 3: Monitor TP and SL orders for execution and auto-cancel
     console.log('');
@@ -1549,6 +1815,144 @@ async function main() {
           const sl = price + (price * parseFloat(limitSlPercent) / 100);
           console.log(`Would place SHORT SELL LIMIT ORDER: ${args[1]} x${args[2]} @₹${price}`);
           console.log(`Take Profit: ₹${tp.toFixed(2)} | Stop Loss: ₹${sl.toFixed(2)}`);
+        }
+        break;
+
+      case 'optimal-trade':
+      case 'opt':
+        if (args.length < 5) {
+          printError('Usage: node place-order.js optimal-trade <symbol> <quantity> <limit_price> <atr>');
+          console.log('Example: node place-order.js optimal-trade NSE:SBIN-EQ 10 500 2.25');
+          console.log('This will calculate optimal TP% and SL% using ATR-based risk-reward calculator');
+          console.log('ATR (Average True Range) is required for dynamic stop loss calculation');
+          return;
+        }
+        const atrValue = parseFloat(args[4]);
+
+        if (!isDryRun) {
+          await buyWithOptimalTPSL(args[1], args[2], args[3], atrValue);
+        } else {
+          const price = parseFloat(args[3]);
+          const qty = parseInt(args[2]);
+
+          // Use ATR-based calculation for dry run preview
+          const result = requiredTPpercent({
+            P: price,
+            Q: qty,
+            ATR: atrValue
+          });
+
+          const actualStopLossPercent = result.calculatedStopLossPercent * 100;
+          const optimalTPPercent = result.required_g * 100;
+
+          console.log(`Would place OPTIMAL RISK-REWARD trade (ATR-based): ${args[1]} x${args[2]} @₹${price}`);
+          console.log(`ATR: ${atrValue} | Calculated Stop Loss: ${actualStopLossPercent.toFixed(3)}%`);
+          console.log(`Stop Loss Price: ₹${result.stopLossPrice.toFixed(2)}`);
+          console.log(`Calculated Optimal Take Profit: ${optimalTPPercent.toFixed(2)}%`);
+          console.log(`Expected Net Loss if SL hits: ₹${result.netLoss.toFixed(2)}`);
+          console.log(`Target Net Profit if TP hits: ₹${(2 * result.netLoss).toFixed(2)} (2:1 ratio)`);
+        }
+        break;
+
+      case 'optimal-short':
+      case 'short-optimal':
+      case 'short-opt':
+        if (args.length < 5) {
+          printError('Usage: node place-order.js optimal-short <symbol> <quantity> <limit_price> <atr>');
+          console.log('Example: node place-order.js optimal-short NSE:SBIN-EQ 10 500 2.25');
+          console.log('This will calculate optimal TP% and SL% for SHORT SELLING using ATR-based risk-reward calculator');
+          console.log('ATR (Average True Range) is required for dynamic stop loss calculation');
+          return;
+        }
+        const shortAtrValue = parseFloat(args[4]);
+
+        if (!isDryRun) {
+          await shortSellWithOptimalTPSL(args[1], args[2], args[3], shortAtrValue);
+        } else {
+          const price = parseFloat(args[3]);
+          const qty = parseInt(args[2]);
+
+          // Use ATR-based calculation for short sell dry run preview
+          const result = requiredTPpercentShort({
+            P: price,
+            Q: qty,
+            ATR: shortAtrValue
+          });
+
+          const actualStopLossPercent = result.calculatedStopLossPercent * 100;
+          const optimalTPPercent = result.required_g * 100;
+
+          console.log(`Would place OPTIMAL SHORT SELL trade (ATR-based): ${args[1]} x${args[2]} @₹${price}`);
+          console.log(`ATR: ${shortAtrValue} | Calculated Stop Loss: ${actualStopLossPercent.toFixed(3)}%`);
+          console.log(`Stop Loss Price: ₹${result.stopLossPrice.toFixed(2)} (buy back ABOVE entry)`);
+          console.log(`Take Profit Price: ₹${result.takeProfitPrice.toFixed(2)} (buy back BELOW entry)`);
+          console.log(`Calculated Optimal Take Profit: ${optimalTPPercent.toFixed(2)}%`);
+          console.log(`Expected Net Loss if SL hits: ₹${result.netLoss.toFixed(2)}`);
+          console.log(`Target Net Profit if TP hits: ₹${(2 * result.netLoss).toFixed(2)} (2:1 ratio)`);
+        }
+        break;
+
+      case 'auto-optimal':
+      case 'auto-opt':
+        if (args.length < 4) {
+          printError('Usage: node place-order.js auto-optimal <symbol> <quantity> <limit_price> [risk_reward_ratio]');
+          console.log('Example: node place-order.js auto-optimal NSE:SBIN-EQ 10 500 2');
+          console.log('This will auto-calculate BOTH optimal SL% and TP% for desired risk-reward ratio');
+          console.log('Default ratio is 1:2 (profit is 2x the loss)');
+          return;
+        }
+        const targetRatio = args[4] || 2;
+        if (!isDryRun) {
+          await buyWithAutoOptimalSL(args[1], args[2], args[3], targetRatio);
+        } else {
+          const price = parseFloat(args[3]);
+          const qty = parseInt(args[2]);
+          const ratio = parseFloat(targetRatio);
+          
+          // Calculate what the optimal SL and TP would be
+          const result = optimalStopLossPercent({
+            P: price,
+            Q: qty,
+            targetRatio: ratio
+          });
+          
+          if (result) {
+            const optimalSLPercent = result.optimal_l * 100;
+            const optimalTPPercent = result.optimal_g * 100;
+            
+            console.log(`Would place AUTO-OPTIMIZED trade: ${args[1]} x${args[2]} @₹${price}`);
+            console.log(`Target Ratio: 1:${ratio} | Calculated SL: ${optimalSLPercent.toFixed(3)}% | Calculated TP: ${optimalTPPercent.toFixed(3)}%`);
+            console.log(`Expected Net Loss: ₹${result.netLoss.toFixed(2)} | Expected Net Profit: ₹${result.netProfit.toFixed(2)}`);
+            console.log(`Actual Ratio Achieved: 1:${result.actualRatio.toFixed(2)}`);
+          } else {
+            console.log('Failed to calculate optimal parameters');
+          }
+        }
+        break;
+        const volTargetRatio = args[4] || 2;
+        const volMultiplier = args[5] || 1.5;
+        if (!isDryRun) {
+          await buyWithVolatilityOptimalSL(args[1], args[2], args[3], volTargetRatio, volMultiplier);
+        } else {
+          const price = parseFloat(args[3]);
+          const qty = parseInt(args[2]);
+          const ratio = parseFloat(volTargetRatio);
+          const multiplier = parseFloat(volMultiplier);
+          
+          const result = optimalStopLossWithVolatility({
+            P: price,
+            Q: qty,
+            symbol: args[1],
+            targetRatio: ratio,
+            volatilityMultiplier: multiplier
+          });
+          
+          if (result) {
+            console.log(`Would place VOLATILITY-OPTIMIZED trade: ${args[1]} x${args[2]} @₹${price}`);
+            console.log(`Daily Vol: ${(result.dailyVolatility * 100).toFixed(2)}% | Multiplier: ${multiplier}x`);
+            console.log(`SL: ${(result.optimal_l * 100).toFixed(3)}% | TP: ${(result.optimal_g * 100).toFixed(3)}%`);
+            console.log(`Risk: ₹${result.netLoss.toFixed(2)} | Reward: ₹${result.netProfit.toFixed(2)} | Ratio: 1:${result.actualRatio.toFixed(2)}`);
+          }
         }
         break;
 
