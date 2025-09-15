@@ -1679,7 +1679,7 @@ function viewLogs(level = 'all') {
           } else if (level === 'info' && line.includes('info')) {
             console.log(`ℹ️ ${line}`);
           } else if (level === 'debug' && line.includes('debug')) {
-            console.log(`🔍 ${line}`);
+            console.log(`� ${line}`);
           } else if (level === 'all') {
             console.log(line);
           }
@@ -1693,6 +1693,215 @@ function viewLogs(level = 'all') {
 
   } catch (error) {
     printError(`Log viewing failed: ${error.message}`);
+  }
+}
+
+// Add these functions after the existing command implementations
+
+async function runTrendingScreener(mode = 'all') {
+  printHeader('Trending Stock Screener');
+
+  try {
+    const TrendingStockScreener = require('./src/strategies/trendingStockScreener');
+    const screener = new TrendingStockScreener();
+
+    console.log('🔍 Analyzing market conditions...');
+
+    // Check if MarketBreadthAnalyzer exists, if not skip market breadth analysis
+    let marketBreadth = null;
+    try {
+      const MarketBreadthAnalyzer = require('./src/services/marketBreadthAnalyzer');
+      const analyzer = new MarketBreadthAnalyzer();
+      marketBreadth = await analyzer.analyzeMarketBreadth();
+
+      console.log(`📊 Market Bias: ${marketBreadth.overallBias}`);
+      console.log(`📈 Trending Probability: ${(marketBreadth.trendingProbability * 100).toFixed(1)}%`);
+
+      if (marketBreadth.trendingProbability < 0.4) {
+        printWarning('Low trending probability detected. Consider avoiding directional trades today.');
+        return;
+      }
+    } catch (breadthError) {
+      printWarning(`Market breadth analysis unavailable: ${breadthError.message}`);
+      console.log('📊 Proceeding with stock screening without market breadth analysis...');
+    }
+
+    console.log('\n🎯 Screening trending candidates...');
+    const candidates = await screener.screenTrendingStocks();
+    
+    if (candidates.length === 0) {
+      printInfo('No trending candidates found matching criteria');
+      return;
+    }
+    
+    console.log(`\n✅ Found ${candidates.length} trending candidates:`);
+    console.log('Rank | Symbol           | Score | Direction | Gap%  | Volume | ATR');
+    console.log('-'.repeat(70));
+    
+    candidates.slice(0, 20).forEach((stock, index) => {
+      console.log(
+        `${(index + 1).toString().padStart(4)} | ` +
+        `${stock.symbol.padEnd(15)} | ` +
+        `${stock.score.toFixed(2).padStart(5)} | ` +
+        `${stock.direction.padEnd(9)} | ` +
+        `${stock.gapPercent.toFixed(2).padStart(5)} | ` +
+        `${stock.volumeRatio.toFixed(1).padStart(6)} | ` +
+        `${stock.atr.toFixed(2)}`
+      );
+    });
+    
+    // Save results to file for later use
+    const fs = require('fs');
+    fs.writeFileSync('./logs/trending-candidates.json', JSON.stringify(candidates, null, 2));
+    printSuccess('Results saved to logs/trending-candidates.json');
+    
+  } catch (error) {
+    printError(`Screening failed: ${error.message}`);
+  }
+}
+
+async function analyzeMarketBreadth() {
+  printHeader('Market Breadth Analysis');
+  
+  try {
+    const MarketBreadthAnalyzer = require('./src/services/marketBreadthAnalyzer');
+    const analyzer = new MarketBreadthAnalyzer();
+    
+    const breadth = await analyzer.analyzeMarketBreadth();
+    
+    console.log('📊 Market Breadth Metrics:');
+    console.log(`   Advance/Decline Ratio: ${breadth.advanceDeclineRatio.toFixed(2)}`);
+    console.log(`   New Highs/Lows Ratio: ${breadth.newHighsLows.ratio.toFixed(2)}`);
+    console.log(`   Leading Sectors: ${breadth.sectorMomentum.leadingSectors}`);
+    console.log(`   Overall Bias: ${breadth.overallBias}`);
+    console.log(`   Trending Probability: ${(breadth.trendingProbability * 100).toFixed(1)}%`);
+    
+    if (breadth.trendingProbability > 0.6) {
+      printSuccess('🎯 High probability trending day - Good for directional trades');
+    } else if (breadth.trendingProbability > 0.4) {
+      printWarning('⚠️ Moderate trending probability - Trade with caution');
+    } else {
+      printError('❌ Low trending probability - Avoid directional trades');
+    }
+    
+  } catch (error) {
+    printError(`Market breadth analysis failed: ${error.message}`);
+  }
+}
+
+async function setupDirectionalTrade(symbol, atr) {
+  printHeader(`Directional Trade Setup - ${symbol}`);
+  
+  try {
+    const DirectionalTradingStrategy = require('./src/strategies/directionalTradingStrategy');
+    const strategy = new DirectionalTradingStrategy();
+    
+    console.log('📊 Analyzing directional opportunity...');
+    const analysis = await strategy.analyzeDirectionalOpportunity(symbol, atr);
+    
+    if (!analysis.isValid) {
+      printError(`No valid directional setup found for ${symbol}`);
+      return;
+    }
+    
+    console.log('\n🎯 Directional Setup Analysis:');
+    console.log(`   Direction: ${analysis.direction}`);
+    console.log(`   Entry Price: ₹${analysis.entryPrice}`);
+    console.log(`   Stop Loss: ₹${analysis.stopLoss} (${analysis.stopLossPercent.toFixed(2)}%)`);
+    console.log(`   Target: ₹${analysis.target} (${analysis.targetPercent.toFixed(2)}%)`);
+    console.log(`   Risk-Reward Ratio: 1:${analysis.riskRewardRatio.toFixed(2)}`);
+    console.log(`   Position Size: ${analysis.recommendedQuantity} shares`);
+    console.log(`   Risk Amount: ₹${analysis.riskAmount.toFixed(2)}`);
+    
+    console.log('\n📋 Recommended Actions:');
+    if (analysis.direction === 'BULLISH') {
+      console.log(`   1. Buy: node place-order.js buy ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
+      console.log(`   2. Set SL: node place-order.js stop-loss ${symbol} ${analysis.stopLoss}`);
+    } else {
+      console.log(`   1. Short: node place-order.js short-limit ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
+    }
+    
+  } catch (error) {
+    printError(`Directional setup failed: ${error.message}`);
+  }
+}
+
+async function startTrendingMonitor(intervalMinutes = 30) {
+  printHeader('Trending Opportunities Monitor');
+  
+  try {
+    // Load previously screened candidates
+    const fs = require('fs');
+    let candidates = [];
+    
+    if (fs.existsSync('./logs/trending-candidates.json')) {
+      candidates = JSON.parse(fs.readFileSync('./logs/trending-candidates.json', 'utf8'));
+      printSuccess(`Loaded ${candidates.length} trending candidates from previous screening`);
+    } else {
+      printWarning('No previous screening results found. Run screening first.');
+      return;
+    }
+    
+    const EnhancedMarketDataService = require('./src/services/enhancedMarketDataService');
+    const marketData = new EnhancedMarketDataService();
+    
+    // Subscribe to top candidates
+    const topSymbols = candidates.slice(0, 10).map(c => c.symbol);
+    console.log(`📡 Monitoring ${topSymbols.length} trending candidates...`);
+    
+    marketData.on('trendingOpportunity', async (opportunity) => {
+      console.log(`\n🚨 TRENDING OPPORTUNITY DETECTED:`);
+      console.log(`   Symbol: ${opportunity.symbol}`);
+      console.log(`   Signals: ${JSON.stringify(opportunity.signals, null, 2)}`);
+      console.log(`   Time: ${opportunity.timestamp.toLocaleTimeString()}`);
+      
+      // Auto-suggest trade setup
+      console.log(`\n💡 Suggested Action:`);
+      console.log(`   node place-order.js directional-setup ${opportunity.symbol}`);
+    });
+    
+    await marketData.connect();
+    await marketData.subscribe(topSymbols);
+    
+    console.log(`⏰ Monitoring will run for ${intervalMinutes} minutes. Press Ctrl+C to stop.`);
+    
+    setTimeout(() => {
+      console.log('\n⏰ Monitoring period completed');
+      marketData.disconnect();
+      process.exit(0);
+    }, intervalMinutes * 60 * 1000);
+    
+  } catch (error) {
+    printError(`Trending monitor failed: ${error.message}`);
+  }
+}
+
+async function startAutoDirectionalTrading(riskAmount, maxPositions) {
+  printHeader('Auto Directional Trading');
+  
+  try {
+    const risk = parseFloat(riskAmount);
+    const maxPos = parseInt(maxPositions);
+    
+    console.log(`💰 Risk per trade: ₹${risk}`);
+    console.log(`📊 Maximum positions: ${maxPos}`);
+    console.log('🤖 Starting automated directional trading...');
+    
+    const AutoDirectionalTrader = require('./src/strategies/autoDirectionalTrader');
+    const trader = new AutoDirectionalTrader({
+      riskPerTrade: risk,
+      maxPositions: maxPos
+    });
+    
+    await trader.initialize();
+    await trader.start();
+    
+    console.log('✅ Auto directional trading started');
+    console.log('📋 Monitor with: node place-order.js positions');
+    console.log('🛑 Stop with: Ctrl+C');
+    
+  } catch (error) {
+    printError(`Auto directional trading failed: ${error.message}`);
   }
 }
 
@@ -2053,6 +2262,53 @@ async function main() {
         checkMarketStatus();
         break;
 
+      case 'screen-trending':
+      case 'screen':
+        if (!isDryRun) {
+          await runTrendingScreener(args[1] || 'all');
+        } else {
+          console.log('Would run trending stock screener');
+        }
+        break;
+
+      case 'market-breadth':
+      case 'breadth':
+        await analyzeMarketBreadth();
+        break;
+
+      case 'directional-setup':
+      case 'dir-setup':
+        if (args.length < 2) {
+          printError('Usage: node place-order.js directional-setup <symbol> [atr]');
+          console.log('Example: node place-order.js directional-setup NSE:SBIN-EQ 2.5');
+          return;
+        }
+        if (!isDryRun) {
+          await setupDirectionalTrade(args[1], args[2]);
+        } else {
+          console.log(`Would setup directional trade for ${args[1]}`);
+        }
+        break;
+
+      case 'trending-monitor':
+      case 'trend-mon':
+        await startTrendingMonitor(args[1] || 30);
+        break;
+
+      case 'auto-directional':
+      case 'auto-dir':
+        if (args.length < 3) {
+          printError('Usage: node place-order.js auto-directional <risk_amount> <max_positions>');
+          console.log('Example: node place-order.js auto-directional 10000 3');
+          return;
+        }
+        if (!isDryRun) {
+          await startAutoDirectionalTrading(args[1], args[2]);
+        } else {
+          console.log(`Would start auto-directional trading with ₹${args[1]} risk per trade`);
+        }
+        break;
+
       default:
         printError(`Unknown command: ${command}`);
         console.log('Run "node place-order.js help" for available commands');
@@ -2099,3 +2355,4 @@ module.exports = {
   viewLogs,
   getHoldings
 };
+
