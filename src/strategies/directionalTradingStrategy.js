@@ -51,6 +51,13 @@ class DirectionalTradingStrategy {
       const currentSignal = macd.signalLine[macd.signalLine.length - 1];
 
       // Determine direction and strength
+      console.log(`📊 Technical Analysis for ${symbol}:`);
+      console.log(`   Current Price: ₹${currentPrice}`);
+      console.log(`   RSI: ${currentRSI.toFixed(2)}`);
+      console.log(`   ATR: ${currentATR.toFixed(2)}`);
+      console.log(`   MACD: ${currentMACD.toFixed(4)}`);
+      console.log(`   Signal: ${currentSignal.toFixed(4)}`);
+
       const analysis = this.evaluateDirectionalSignals({
         symbol,
         currentPrice,
@@ -63,9 +70,26 @@ class DirectionalTradingStrategy {
         historicalData
       });
 
+      console.log(`📈 Analysis Result:`);
+      console.log(`   Direction: ${analysis.direction}`);
+      console.log(`   Strength: ${analysis.strength.toFixed(2)}`);
+      console.log(`   Confidence: ${analysis.confidence.toFixed(2)}`);
+      console.log(`   Valid Setup: ${analysis.isValid ? '✅' : '❌'}`);
+
+      if (!analysis.isValid) {
+        console.log(`\n💡 Setup Details (for reference):`);
+        console.log(`   Entry Price: ₹${analysis.entryPrice}`);
+        console.log(`   Stop Loss: ₹${analysis.stopLoss}`);
+        console.log(`   Target: ₹${analysis.target}`);
+        console.log(`   Risk/Reward: ${analysis.riskRewardRatio.toFixed(2)}`);
+        console.log(`   Suggested Quantity: ${analysis.recommendedQuantity}`);
+        console.log(`\n⚠️ Reason: Strength (${analysis.strength.toFixed(2)}) < 0.4 or Direction is NEUTRAL`);
+      }
+
       return analysis;
     } catch (error) {
       logger.error(`Directional analysis failed for ${symbol}: ${error.message}`);
+      console.log(`❌ Analysis Error: ${error.message}`);
       return {
         isValid: false,
         error: error.message,

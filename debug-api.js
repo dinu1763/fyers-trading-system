@@ -72,6 +72,18 @@ async function debugAPI() {
       console.log('❌ Quotes Error:', error.message);
       console.log('---\n');
     }
+
+    // Test Available Methods
+    console.log('6. Checking Available Fyers Methods...');
+    try {
+      console.log('Available methods on fyersService.fyers:');
+      const methods = Object.getOwnPropertyNames(fyersService.fyers).filter(name => typeof fyersService.fyers[name] === 'function');
+      console.log('Methods:', methods);
+      console.log('---\n');
+    } catch (error) {
+      console.log('❌ Methods Check Error:', error.message);
+      console.log('---\n');
+    }
     
   } catch (error) {
     console.log('❌ General Error:', error.message);

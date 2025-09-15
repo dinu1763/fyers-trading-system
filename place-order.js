@@ -1799,26 +1799,47 @@ async function setupDirectionalTrade(symbol, atr) {
     console.log('📊 Analyzing directional opportunity...');
     const analysis = await strategy.analyzeDirectionalOpportunity(symbol, atr);
     
-    if (!analysis.isValid) {
-      printError(`No valid directional setup found for ${symbol}`);
-      return;
-    }
-    
-    console.log('\n🎯 Directional Setup Analysis:');
-    console.log(`   Direction: ${analysis.direction}`);
-    console.log(`   Entry Price: ₹${analysis.entryPrice}`);
-    console.log(`   Stop Loss: ₹${analysis.stopLoss} (${analysis.stopLossPercent.toFixed(2)}%)`);
-    console.log(`   Target: ₹${analysis.target} (${analysis.targetPercent.toFixed(2)}%)`);
-    console.log(`   Risk-Reward Ratio: 1:${analysis.riskRewardRatio.toFixed(2)}`);
-    console.log(`   Position Size: ${analysis.recommendedQuantity} shares`);
-    console.log(`   Risk Amount: ₹${analysis.riskAmount.toFixed(2)}`);
-    
-    console.log('\n📋 Recommended Actions:');
-    if (analysis.direction === 'BULLISH') {
-      console.log(`   1. Buy: node place-order.js buy ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
-      console.log(`   2. Set SL: node place-order.js stop-loss ${symbol} ${analysis.stopLoss}`);
+    if (analysis.isValid) {
+      printSuccess(`✅ Valid directional setup found for ${symbol}!`);
+
+      console.log('\n🎯 Directional Setup Analysis:');
+      console.log(`   Direction: ${analysis.direction}`);
+      console.log(`   Strength: ${analysis.strength.toFixed(2)}`);
+      console.log(`   Confidence: ${analysis.confidence.toFixed(2)}`);
+      console.log(`   Entry Price: ₹${analysis.entryPrice}`);
+      console.log(`   Stop Loss: ₹${analysis.stopLoss}`);
+      console.log(`   Target: ₹${analysis.target}`);
+      console.log(`   Risk-Reward Ratio: 1:${analysis.riskRewardRatio.toFixed(2)}`);
+      console.log(`   Position Size: ${analysis.recommendedQuantity} shares`);
+
+      console.log('\n📋 Recommended Actions:');
+      if (analysis.direction === 'BULLISH') {
+        console.log(`   1. Buy: node place-order.js buy ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
+        console.log(`   2. Set SL: node place-order.js stop-loss ${symbol} ${analysis.stopLoss}`);
+      } else {
+        console.log(`   1. Short: node place-order.js short-limit ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
+      }
     } else {
-      console.log(`   1. Short: node place-order.js short-limit ${symbol} ${analysis.recommendedQuantity} ${analysis.entryPrice}`);
+      printWarning(`⚠️ No strong directional setup found for ${symbol}`);
+
+      if (analysis.error) {
+        printError(`Error: ${analysis.error}`);
+      } else {
+        console.log('\n📊 Current Analysis (for reference):');
+        console.log(`   Direction: ${analysis.direction}`);
+        console.log(`   Strength: ${analysis.strength.toFixed(2)} (needs > 0.4)`);
+        console.log(`   Confidence: ${analysis.confidence.toFixed(2)}`);
+        console.log(`   Entry Price: ₹${analysis.entryPrice}`);
+        console.log(`   Stop Loss: ₹${analysis.stopLoss}`);
+        console.log(`   Target: ₹${analysis.target}`);
+        console.log(`   Risk-Reward Ratio: 1:${analysis.riskRewardRatio.toFixed(2)}`);
+
+        console.log('\n💡 Suggestions:');
+        console.log('   • Wait for stronger technical signals');
+        console.log('   • Look for RSI > 60 (bullish) or < 40 (bearish)');
+        console.log('   • Wait for MACD crossover above signal line');
+        console.log('   • Consider other symbols with better setups');
+      }
     }
     
   } catch (error) {
